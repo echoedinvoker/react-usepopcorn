@@ -1,8 +1,5 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useState } from "react";
 import StarRating from "./StarRating"
-import { useKey } from "./useKey";
-import { useLocalStorageState } from "./useLocalStorageState";
-import { useMovies } from "./useMovies";
 
 const tempMovieData = [
   {
@@ -57,9 +54,51 @@ const KEY = '3cc7535b'
 
 export default function App() {
   const [query, setQuery] = useState("");
-  const [watched, setWatched] = useLocalStorageState([], 'watched')
+  const [movies, setMovies] = useState([]);
+  const [watched, setWatched] = useState([]);
+  const [isLoading, setIsLoading] = useState(false);
+  const [error, setError] = useState("")
   const [selectedId, setSelectedId] = useState(null)
-  const { movies, isLoading, error } = useMovies(query)
+
+  useEffect(function() {
+    const controller = new AbortController()
+
+    async function fetchMovies() {
+      try {
+        setIsLoading(true)
+        setError("")
+        const res = await fetch(
+          `http://www.omdbapi.com/?apikey=${KEY}&s=${query}`,
+          { signal: controller.signal }
+        )
+        if (!res.ok) throw new Error("Something went wrong with fetching movies");
+        const data = await res.json()
+        if (data.Response === 'False') throw new Error("Not found movie")
+        setMovies(data.Search)
+        // setError("")
+      } catch (err) {
+        if (err.name !== "AbortError") {
+          setError(err.message)
+        }
+      } finally {
+        setIsLoading(false)
+      }
+    }
+
+    if (query.length < 3) {
+      setMovies([])
+      setError("")
+      return
+    }
+
+    handleCloseMovie()
+    fetchMovies()
+
+    return function() {
+      controller.abort()
+    }
+  }, [query])
+
 
   function handleSelectMovie(id) {
     setSelectedId(selectedId => selectedId === id ? null : id)
@@ -74,11 +113,10 @@ export default function App() {
     setWatched(movies => movies.filter(movie => movie.imdbID !== id))
   }
 
-
   return (
     <>
       <NavBar>
-        <Search query={query} setQuery={setQuery} />
+        <Search setQuery={setQuery} />
         <Result movies={movies} query={query} />
       </NavBar>
       <Main>
@@ -109,8 +147,6 @@ function MovieDetails({ watched, selectedId, onCloseMovie, onAddWatched }) {
   const [userRating, setUserRating] = useState("")
   const beforeRating = watched.find(movie => movie.imdbID === selectedId)?.userRating
 
-  const countRef = useRef(0)
-
   const {
     Title: title,
     Year: year,
@@ -123,10 +159,6 @@ function MovieDetails({ watched, selectedId, onCloseMovie, onAddWatched }) {
     Director: director,
     Genre: genre
   } = movie;
-
-  useEffect(function() {
-    if (userRating) countRef.current++
-  }, [userRating])
 
   useEffect(function() {
     async function fetchMovieDetails() {
@@ -146,10 +178,23 @@ function MovieDetails({ watched, selectedId, onCloseMovie, onAddWatched }) {
 
     return function() {
       document.title = 'usePopcorn'
+      console.log(`Clean up effect for movie ${title}`)
     }
   }, [title])
 
-  useKey('Escape', onCloseMovie)
+  useEffect(function() {
+    function callback(e) {
+      if (e.code === 'Escape') {
+        onCloseMovie()
+        console.log("CLOSE")
+      }
+    }
+    document.addEventListener('keydown', callback)
+
+    return function() {
+      document.removeEventListener('keydown', callback)
+    }
+  }, [onCloseMovie])
 
 
   function handleAddMovie() {
@@ -160,8 +205,7 @@ function MovieDetails({ watched, selectedId, onCloseMovie, onAddWatched }) {
       imdbID: selectedId,
       imdbRating: Number(imdbRating),
       runtime: Number(runtime.split(' ').at(0)),
-      userRating,
-      countRatingDecisions: countRef.current
+      userRating
     }
     onAddWatched(movie)
     onCloseMovie()
@@ -276,30 +320,6 @@ function MovieItem({ movie, onSeleMovie }) {
 }
 
 function Search({ query, setQuery }) {
-  const inputEl = useRef(null)
-
-  useEffect(function() {
-    inputEl.current.focus()
-  }, [])
-
-  // useEffect(function() {
-  //   function callback(e) {
-  //     if (document.activeElement === inputEl.current) return
-  //
-  //     if (e.code === 'Enter') {
-  //       inputEl.current.focus()
-  //       setQuery("")
-  //     }
-  //   }
-  //   document.addEventListener('keydown', callback)
-  // }, [setQuery])
-
-  useKey('Enter', function() {
-    if (document.activeElement === inputEl.current) return
-    inputEl.current.focus()
-    setQuery("")
-  })
-
   return (
     <input
       className="search"
@@ -307,7 +327,6 @@ function Search({ query, setQuery }) {
       placeholder="Search movies..."
       value={query}
       onChange={(e) => setQuery(e.target.value)}
-      ref={inputEl}
     />
   )
 }
